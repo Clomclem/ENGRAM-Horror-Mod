@@ -1,18 +1,29 @@
 package horror.blueice129.entity;
 
+import com.google.common.collect.Maps;
+import com.mojang.authlib.GameProfile;
+import horror.blueice129.entity.ai.control.PlayerBodyControl;
+import horror.blueice129.entity.ai.control.PlayerJumpControl;
+import horror.blueice129.entity.ai.control.PlayerLookControl;
+import horror.blueice129.entity.ai.control.PlayerMoveControl;
+import horror.blueice129.entity.ai.pathing.Blueice129Navigation;
 import horror.blueice129.entity.goals.GoalProfileRegistry;
+import horror.blueice129.scheduler.Blueice129SpawnScheduler;
 import horror.blueice129.utils.EntityLoginState;
 import horror.blueice129.HorrorMod129;
 import horror.blueice129.data.HorrorModPersistentState;
+import net.fabricmc.fabric.impl.event.interaction.FakePlayerNetworkHandler;
 import net.minecraft.entity.Entity;
-import net.minecraft.entity.EntityType;
-import net.minecraft.entity.attribute.DefaultAttributeContainer;
-import net.minecraft.entity.attribute.EntityAttributes;
-import net.minecraft.entity.mob.PathAwareEntity;
+import net.minecraft.entity.ai.goal.GoalSelector;
+import net.minecraft.entity.ai.pathing.PathNodeType;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
-import net.minecraft.text.Text;
+import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
+import net.minecraft.world.WorldView;
+
+import java.util.Map;
 
 /**
  * Blueice129 Entity - A custom PathAwareEntity that takes the form of a player
@@ -26,7 +37,11 @@ import net.minecraft.world.World;
  * This entity uses a state-based goal profile system where different behaviors
  * are activated based on the current EntityState.
  */
-public class Blueice129Entity extends PathAwareEntity {
+public class Blueice129Entity extends ServerPlayerEntity {
+
+    public final static String name = "Blueice129";
+    public final static GameProfile gameProfile = new GameProfile(java.util.UUID.nameUUIDFromBytes(name.getBytes()),
+            name);
 
     private EntityState currentState;
     private int ticksInCurrentState = 0;
@@ -34,6 +49,20 @@ public class Blueice129Entity extends PathAwareEntity {
     private GoalProfileRegistry goalRegistry;
     private EntityState previousState = null;
     private int ticksInUnloadedChunk = 0;
+
+    protected Blueice129Navigation navigation;
+    private final Map<PathNodeType, Float> pathfindingPenalties = Maps.newEnumMap(PathNodeType.class);
+
+    public final GoalSelector goalSelector;
+    public final GoalSelector targetSelector;
+
+    protected PlayerLookControl lookControl;
+    protected PlayerMoveControl moveControl;
+    protected PlayerJumpControl jumpControl;
+    private final PlayerBodyControl bodyControl;
+
+    private BlockPos positionTarget = BlockPos.ORIGIN;
+    private float positionTargetRange = -1.0F;
 
     public enum EntityState {
         PASSIVE, // Default state, does nothing really
@@ -74,13 +103,82 @@ public class Blueice129Entity extends PathAwareEntity {
         }
     }
 
+    public void onStartPathfinding() {
+    }
+
+    public void onFinishPathfinding() {
+    }
+
+    public float getPathfindingPenalty(PathNodeType nodeType) {
+        Float float_ = (Float)this.pathfindingPenalties.get(nodeType);
+        return float_ == null ? nodeType.getDefaultPenalty() : float_;
+    }
+
+    public void setPathfindingPenalty(PathNodeType nodeType, float penalty) {
+        this.pathfindingPenalties.put(nodeType, penalty);
+    }
+
+    @Override
+    public void remove(Entity.RemovalReason reason) {
+        super.remove(reason);
+        Blueice129SpawnScheduler.remove();
+    }
+
+    protected Blueice129Navigation createNavigation(World world) {
+        return new Blueice129Navigation(this, world);
+    }
+
+    public Blueice129Navigation getNavigation() {
+        return this.navigation;
+    }
+
+    @Override
+    protected final void tickNewAi() {
+        super.tickNewAi();
+        this.despawnCounter++;
+        this.getWorld().getProfiler().push("sensing");
+        this.getWorld().getProfiler().pop();
+        int i = this.getWorld().getServer().getTicks() + this.getId();
+        if (i % 2 != 0 && this.age > 1) {
+            this.getWorld().getProfiler().push("targetSelector");
+            this.targetSelector.tickGoals(false);
+            this.getWorld().getProfiler().pop();
+            this.getWorld().getProfiler().push("goalSelector");
+            this.goalSelector.tickGoals(false);
+            this.getWorld().getProfiler().pop();
+        } else {
+            this.getWorld().getProfiler().push("targetSelector");
+            this.targetSelector.tick();
+            this.getWorld().getProfiler().pop();
+            this.getWorld().getProfiler().push("goalSelector");
+            this.goalSelector.tick();
+            this.getWorld().getProfiler().pop();
+        }
+
+        this.getWorld().getProfiler().push("navigation");
+        this.navigation.tick();
+        this.getWorld().getProfiler().pop();
+        this.getWorld().getProfiler().push("mob tick");
+        this.getWorld().getProfiler().pop();
+        this.getWorld().getProfiler().push("controls");
+        this.getWorld().getProfiler().push("move");
+        this.moveControl.tick();
+        this.getWorld().getProfiler().swap("look");
+        this.lookControl.tick();
+        this.getWorld().getProfiler().swap("jump");
+        this.jumpControl.tick();
+        this.getWorld().getProfiler().pop();
+        this.getWorld().getProfiler().pop();
+    }
+
     /**
      * will handle automatic state transitions and per-tick behavior
      */
     @Override
     public void tick() {
-        super.tick();
-        
+        super.tick(); // Remove Maybe?
+        // maybe add tickNewAI();
+
         // Only increment tick counter on server side where state transitions happen
         if (!this.getWorld().isClient) {
             ticksInCurrentState++;
@@ -330,18 +428,94 @@ public class Blueice129Entity extends PathAwareEntity {
         this.goalSelector.add(priority, goal);
     }
 
-    public Blueice129Entity(EntityType<? extends PathAwareEntity> entityType, World world) {
-        super(entityType, world);
+    public void setForwardSpeed(float forwardSpeed) {
+        this.forwardSpeed = forwardSpeed;
+    }
 
-        // Set custom name to display "Blueice129" like a player
-        this.setCustomName(Text.literal("Blueice129"));
-        this.setCustomNameVisible(true);
+    public void setUpwardSpeed(float upwardSpeed) {
+        this.upwardSpeed = upwardSpeed;
+    }
+
+    public void setSidewaysSpeed(float sidewaysSpeed) {
+        this.sidewaysSpeed = sidewaysSpeed;
+    }
+
+    @Override
+    public void setMovementSpeed(float movementSpeed) {
+        super.setMovementSpeed(movementSpeed);
+        this.setForwardSpeed(movementSpeed);
+    }
+
+    public boolean isInWalkTargetRange() {
+        return this.isInWalkTargetRange(this.getBlockPos());
+    }
+
+    public boolean isInWalkTargetRange(BlockPos pos) {
+        return this.positionTargetRange == -1.0F ? true : this.positionTarget.getSquaredDistance(pos) < this.positionTargetRange * this.positionTargetRange;
+    }
+
+    public void setPositionTarget(BlockPos target, int range) {
+        this.positionTarget = target;
+        this.positionTargetRange = range;
+    }
+
+    public BlockPos getPositionTarget() {
+        return this.positionTarget;
+    }
+
+    public float getPositionTargetRange() {
+        return this.positionTargetRange;
+    }
+
+    public void clearPositionTarget() {
+        this.positionTargetRange = -1.0F;
+    }
+
+    public boolean hasPositionTarget() {
+        return this.positionTargetRange != -1.0F;
+    }
+
+    private PlayerBodyControl createBodyControl() {
+        return  new PlayerBodyControl(this);
+    }
+
+    public PlayerBodyControl getBodyControl() {
+        return  this.bodyControl;
+    }
+
+    public PlayerJumpControl getJumpControl() {
+        return  this.jumpControl;
+    }
+
+    public PlayerLookControl getLookControl() {
+        return  this.lookControl;
+    }
+
+    public PlayerMoveControl getMoveControl() {
+        return  this.moveControl;
+    }
+
+    // WARNING: THIS IS PUBLIC TO MAKE THE SPAWN SCHEDULER BE ABLE TO ACCESS IT; DO NOT CALL IT DIRECTLY
+    public Blueice129Entity(ServerWorld world) {
+        super(world.getServer(), world, gameProfile);
+
+        this.networkHandler = new FakePlayerNetworkHandler(this);
+
+        this.lookControl = new PlayerLookControl(this);
+        this.moveControl = new PlayerMoveControl(this);
+        this.jumpControl = new PlayerJumpControl(this);
+        this.bodyControl = this.createBodyControl();
+
+        this.goalSelector = new GoalSelector(world.getProfilerSupplier());
+        this.targetSelector = new GoalSelector(world.getProfilerSupplier());
+
+        this.navigation = createNavigation(world);
 
         // Initialize the goal profile registry
         this.goalRegistry = new GoalProfileRegistry(this);
 
         // Set initial state based on agro meter
-        if (!world.isClient && world.getServer() != null) {
+        if (!world.isClient) {
             HorrorModPersistentState state = HorrorModPersistentState.getServerState(world.getServer());
             int agroMeter = state.getIntValue("agroMeter", 0);
 
@@ -355,66 +529,58 @@ public class Blueice129Entity extends PathAwareEntity {
             this.currentState = EntityState.PASSIVE;
         }
 
-        // Apply initial goal profile now that goalRegistry is initialized
-        // This must be done after goalRegistry is created because initGoals()
-        // is called by the parent constructor before this point (when goalRegistry was
-        // null)
         if (goalRegistry != null) {
             goalRegistry.applyCurrentProfile();
         }
     }
 
     /**
-     * Check if a Blueice129 entity can spawn in the world.
-     * Ensures only one instance exists at a time.
-     * 
-     * @param world The world to check
-     * @return true if no Blueice129 entity exists, false otherwise
+     * {@return the maximum degrees which the pitch can change when looking}
+     *
+     * <p>This is used by the look control.
+     *
+     * <p>It can return from {@code 1} for entities that can hardly raise their head,
+     * like axolotls or dolphins, or {@code 180} for entities that can freely raise
+     * and lower their head, like guardians. The default return value is {@code 40}.
      */
-    public static boolean canSpawn(World world) {
-        if (world.isClient) {
-            return true; // Client-side doesn't need to check
-        }
-
-        // Check if any Blueice129Entity already exists in the world
-        for (Entity entity : ((ServerWorld) world).iterateEntities()) {
-            if (entity instanceof Blueice129Entity && entity.isAlive()) {
-                return false;
-            }
-        }
-        return true;
+    public int getMaxLookPitchChange() {
+        return 40;
     }
 
     /**
-     * Initialize AI goals for the entity.
-     * This method is called during entity construction to set up behavior.
-     * The goal profile system handles goal initialization based on the current
-     * state.
+     * {@return the maximum degrees which the head yaw can differ from the body yaw}
+     *
+     * <p>This is used by the body control.
+     *
+     * <p>It can return from {@code 1} for entities that can hardly rotate their head,
+     * like axolotls or dolphins, or {@code 180} for entities that can freely rotate
+     * their head, like shulkers. The default return value is {@code 75}.
      */
-    @Override
-    protected void initGoals() {
-        // Apply the initial goal profile (PASSIVE state)
-        if (goalRegistry != null) {
-            goalRegistry.applyCurrentProfile();
-        }
+    public int getMaxHeadRotation() {
+        return 75;
     }
 
     /**
-     * Create default attributes for the Blueice129 entity.
-     * This includes health, movement speed, attack damage, etc.
+     * {@return the maximum degrees which the yaw can change when looking}
+     *
+     * <p>This is used by the look control.
+     *
+     * <p>The default return value is {@code 10}.
      */
-    public static DefaultAttributeContainer.Builder createBlueice129Attributes() {
-        return PathAwareEntity.createMobAttributes()
-                .add(EntityAttributes.GENERIC_MAX_HEALTH, 20.0D) // Same as player
-                .add(EntityAttributes.GENERIC_MOVEMENT_SPEED, 0.25D) // Same as player
-                .add(EntityAttributes.GENERIC_FOLLOW_RANGE, 35.0D); // How far they can detect entities
+    public int getMaxLookYawChange() {
+        return 10;
     }
 
-    /**
-     * Override to make the nametag always visible, not just when looking at it
-     */
-    @Override
-    public boolean shouldRenderName() {
-        return true;
+    public float getPathfindingFavor(BlockPos pos) {
+        return this.getPathfindingFavor(pos, this.getWorld());
     }
+
+    public float getPathfindingFavor(BlockPos pos, WorldView world) {
+        return 1.0F;
+    }
+
+    public boolean isNavigating() {
+        return !this.getNavigation().isIdle();
+    }
+
 }

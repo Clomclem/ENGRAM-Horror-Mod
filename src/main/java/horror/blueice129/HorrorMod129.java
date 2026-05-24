@@ -39,17 +39,15 @@ public class HorrorMod129 implements ModInitializer {
 	// That way, it's clear which mod wrote info, warnings, and errors.
 	public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
-	/**
-	 * Blueice129 Entity Type registration.
-	 * This entity is a PathAwareEntity that looks like a player with Blueice129's skin.
-	 */
+	// Create accessor
 	public static final EntityType<Blueice129Entity> BLUEICE129_ENTITY = Registry.register(
-		Registries.ENTITY_TYPE,
-		new Identifier(MOD_ID, "blueice129"),
-		EntityType.Builder.create(Blueice129Entity::new, SpawnGroup.CREATURE)
-			.setDimensions(0.6f, 1.8f) // Player dimensions
-			.build("blueice129")
+			Registries.ENTITY_TYPE,
+			new Identifier(MOD_ID, "blueice129"),
+			EntityType.Builder.create(Blueice129Entity::new, SpawnGroup.CREATURE)
+					.setDimensions(0.6f, 1.8f) // Player dimensions
+					.build("blueice129")
 	);
+
 
 	@Override
 	public void onInitialize() {
@@ -60,10 +58,7 @@ public class HorrorMod129 implements ModInitializer {
 		
 		// Register networking packets
 		ModNetworking.registerPackets();
-		
-		// Register entity attributes
-		FabricDefaultAttributeRegistry.register(BLUEICE129_ENTITY, Blueice129Entity.createBlueice129Attributes());
-		
+
 		// Register schedulers
 		OnWorldCreation.register();
 		AmbianceScheduler.register();

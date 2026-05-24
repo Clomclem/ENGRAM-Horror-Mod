@@ -32,6 +32,8 @@ TODO:
 
 - resource gathering behavior (wood, stone, ores)
 
+- there can only be one entity... (custom player name)
+
 
 
 ## Sound Ideas

@@ -3,9 +3,11 @@ package horror.blueice129.scheduler;
 import horror.blueice129.HorrorMod129;
 import horror.blueice129.data.HorrorModPersistentState;
 import horror.blueice129.entity.Blueice129Entity;
+import horror.blueice129.utils.BarebonesInventory;
 import horror.blueice129.utils.EntityLoginState;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerWorldEvents;
+import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -16,6 +18,8 @@ import net.minecraft.world.World;
 import net.minecraft.world.biome.Biome;
 
 import net.minecraft.util.math.random.Random;
+
+import java.util.Optional;
 
 /**
  * Scheduler for natural Blueice129 entity spawning.
@@ -31,6 +35,9 @@ public class Blueice129SpawnScheduler {
 
     private static final int MIN_SPAWN_DISTANCE = 40;
     private static final int MAX_SPAWN_DISTANCE = 100;
+
+    private static Optional<Blueice129Entity> currentEntity = Optional.empty();
+    private static BarebonesInventory globalInventory = null;
 
     /**
      * Gets a random delay for the next spawn attempt.
@@ -102,7 +109,7 @@ public class Blueice129SpawnScheduler {
         ServerWorld world = server.getOverworld();
 
         // Check if an entity can spawn (only one at a time)
-        if (!Blueice129Entity.canSpawn(world)) {
+        if (currentEntity.isPresent()) {
             HorrorMod129.LOGGER.info("Blueice129 spawn attempt: Entity already exists in world");
             return false;
         }
@@ -134,7 +141,10 @@ public class Blueice129SpawnScheduler {
         }
 
         // Spawn the entity
-        spawnEntity(world, spawnPos, server);
+        currentEntity = Optional.of(spawnEntity(world, spawnPos, server));
+        if (globalInventory != null) {
+            globalInventory.copyTo(currentEntity.get().getInventory());
+        }
         return false;
     }
 
@@ -176,6 +186,15 @@ public class Blueice129SpawnScheduler {
         }
 
         return null;
+    }
+
+    public static void remove() {
+        if (currentEntity.isEmpty()) {
+            HorrorMod129.LOGGER.info("Failed to remove entity: It did not exist");
+            return;
+        }
+        globalInventory = BarebonesInventory.from(currentEntity.get().getInventory());
+        currentEntity = Optional.empty();
     }
 
     /**
@@ -230,13 +249,8 @@ public class Blueice129SpawnScheduler {
      * @param pos    The spawn position
      * @param server The Minecraft server instance
      */
-    private static void spawnEntity(ServerWorld world, BlockPos pos, MinecraftServer server) {
-        Blueice129Entity entity = HorrorMod129.BLUEICE129_ENTITY.create(world);
-
-        if (entity == null) {
-            HorrorMod129.LOGGER.error("Failed to create Blueice129Entity instance");
-            return;
-        }
+    private static Blueice129Entity spawnEntity(ServerWorld world, BlockPos pos, MinecraftServer server) {
+        Blueice129Entity entity = new Blueice129Entity(world);
 
         // Set position
         entity.refreshPositionAndAngles(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5,
@@ -259,6 +273,7 @@ public class Blueice129SpawnScheduler {
             HorrorMod129.LOGGER.warn("Failed to spawn Blueice129 entity at {} {} {}",
                     pos.getX(), pos.getY(), pos.getZ());
         }
+        return entity;
     }
 
     /**
@@ -324,7 +339,7 @@ public class Blueice129SpawnScheduler {
         ServerWorld world = server.getOverworld();
 
         // Check if an entity can spawn
-        if (!Blueice129Entity.canSpawn(world)) {
+        if (currentEntity.isPresent()) {
             return null;
         }
 

@@ -3,8 +3,8 @@
   "package": "horror.blueice129.mixin",
   "compatibilityLevel": "JAVA_17",
   "mixins": [
-    "BodyControlMixin",
     "ExampleMixin",
+    "PlayerEntityMixin",
     "ServerWorldSleepStatusMixin",
     "SleepManagerMixin"
   ],
